@@ -1,0 +1,328 @@
+---
+title: \vspace{6cm} \LARGE Orange Juice Sales at Wasatch Grocery Chain
+subtitle: "Identification of Significant Predictor Variables and Predictive Modelling of Customer Preference in Minute Maid Sales"
+author: "Chris Gearheart and Chris Porter"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+\newpage
+
+```{r library calls, include=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(corrplot)
+library(xgboost)
+library(vip)
+library(DALEXtra)
+library(ROCR)
+library(dplyr)
+library(plotROC)
+library(glmnet)
+```
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+set.seed(1234)
+df <- read.csv(url("http://data.mishra.us/files/project/OJ_data.csv"))
+df[-1] <- lapply(df[-1],as.numeric)
+df$Purchase <- as.factor(df$Purchase)
+purchase_testtrain <- initial_split(df, prop = 0.75, strata = Purchase)
+train <- training(purchase_testtrain)
+test <- testing(purchase_testtrain)
+
+```
+## Introduction
+
+Wasatch Grocery Chain (WGC) is a regional grocery chain operating in the Intermoutain West of the US. WGC sells two brands of orange juice in its stores, Citrus Hill (CH) and Minute Maid (MM) of which MM is the more profitable to the company. This report will identify **what customer factors** within available data **contribute to purchase of Minute Maid over Citrus Hill**, as well as **to** **what degree these factors influence customer choice**. In addition, a predictive model is created that will allow the Sales Department to identify other customers within our customer base that are more likely to purchase Minute Maid brand orange juice, thus driving profitability across the company.
+
+### Available Data
+
+The data set used in this report contains 13 possible predictor variables as well as 1 outcome variable, Purchase, which records whether or not a customer purchased MM. There are a total of 1070 observations in the data set. The data set was further partitioned into a **training** data set, containing `r nrow(train)` observations, and a validation **testing** data set containing `r nrow(test)` observations.
+
+The code below imports the data set, converts the binary `Purchase` outcome into a factor, and pulls out 25% of the observations as a hold-out set or test set against which our final model can be tested. Doing so helps us avoid the mistake of training a model that performs well against the sample data, but fails to generalize to a new data set from the same population.
+
+
+## Methods
+
+### **Logistic Regression:**
+
+WGC's management team wants to know **which variables contribute to a customer outcome of "Yes; Purchased Minute Maid**." Their goal matches the strengths of a logistic regression, which can explain the strength and direction of independent variables' effects on a binary classification outcome (often yes/no or is/is not). This algorithm will tell management which variables push customers towards or away from a Minute Maid purchase, plus which variables have no bearing on the outcome. Significant variables proven to have big enough effects can become levers for action or intervention for management.
+
+##### Pre-processing 
+
+Logistic regressions work when:
+
+1.  Qualitative variables have been turned into quantitative dummy variables.
+
+2.  No columns are uniformly filled with one unique value.
+
+3.  There is no missing data.
+
+4.  There is no correlation between the variables.
+
+Fortunately, the first three conditions were already true of our dataset.
+
+```{r logreg - preproc1}
+
+# 1. Dummy variables are unnecessary because only `Purchase` is a factor, and it's already expressed using dummy variables.
+
+# 2. No columns are uniformly filled with one unique value — there is spread in each of the 13 independent variables.
+summary(train)
+
+# 3. There is no missing data — imputation is not necessary
+sum(is.na(train))
+```
+
+A correlogram confirms that there is high correlation between some of the thirteen variables. Some of them appear to be multicollinear, or not fully independent of one another (for correlation coefficients see Appendix).
+
+```{r logreg - preproc2}
+
+corr <- cor(df[-1]) 
+corr %>% cor() %>% corrplot()
+```
+
+Accordingly, our team decided to use the "Lasso" method of logistic regression that regresses all variables against all other variables, modifying each variable's predictive weight based on its correlation to other variables by strengthening, weakening, or even nullifying its effect.
+
+#### Variable selection and model design 
+
+The `cv.glmnet()` function below applied penalized regression to our training data set, printing out coefficients for each variable that have been penalized or nullified if their relationship to other variables is multicollinear.
+
+Additionally, in a microcosm of the training/test split we set up at the beginning of the project, this method cross-validates the results of the trained regression by testing it against seven different one-seventh chunks of the entire set.
+
+The code below performs a logistic regression, but it uses Lasso (`alpha = 1`), giving us something to say about the magnitude and direction of variables, plus which variables' influences were shrunk to zero when all variables were regressed against each other (`Price MM`, `Disc CH`, `SalePriceCH`, and `PctDiscCH`). **Doing that gives us an AUC of 0.9**, and that's after inline k-fold validation of 7 when training the model.
+
+```{r Lasso logistic regression}
+
+predictors <- train[,c(2:13)] %>%
+  mutate(
+    SpecialCH = as.factor(SpecialCH), 
+    SpecialMM = as.factor(SpecialMM)
+    )
+
+predictors <- data.matrix(predictors)
+
+set.seed(1234)
+cv.binomial <- cv.glmnet(x = predictors, y = train$Purchase,
+                         alpha = 1, family = "binomial",
+                         nfolds = 7, standardize = TRUE, type.measure = "auc")
+
+plot(cv.binomial)
+
+(best.lambda <- cv.binomial$lambda.min)
+y4<- coef(cv.binomial, s="lambda.min", exact=FALSE)
+print(y4)
+```
+
+Since the Lasso function of the regression has shrunk the effects of `PriceMM`, `DiscCH`, `SalesPriceCH` and `PctDiscCH` to zero or "`.`" in light of multicollinearity, management can be confident that those variables are not meaningful levers for action.
+
+#### Interpreting the coefficients
+
+Since `cv.glmnet()` standardized/scaled the data so that the inconsistently sized ranges of values used by different variables won't accidentally weight different variables as more important, the coefficients above are not interpretable yet.
+
+```{r}
+
+# add 11/28
+(varInt <- y4 %>% as.matrix %>% as.data.frame)
+
+varInt$varDdevs <- c("NA", sd(train$PriceCH), sd(train$PriceMM), sd(train$DiscCH), sd(train$DiscMM), sd(train$SpecialCH), sd(train$SpecialMM), sd(train$LoyalCH), sd(train$SalePriceMM), sd(train$SalePriceCH), sd(train$PriceDiff), sd(train$PctDiscMM), sd(train$PctDiscCH))
+
+varInt <- varInt %>% 
+  mutate(
+    s1 = ifelse(s1 == 0, NA, s1),
+    logodds = ifelse(s1 == 0.000, NA, exp(varInt[,1])),
+    varDdevs = ifelse(s1 == 0, NA, as.numeric(varDdevs)),
+    varDdevs = round(varDdevs, 3),
+    logodds = round(logodds, 3),
+    s1 = round(s1,3)
+  )
+
+colnames(varInt) <- c(s1 = 'Coefficient', 'For every variable unit increase of this size...', '... the odds of purchase increase by this much')
+
+varInt
+
+```
+
+Our model reports that the three variables with the strongest effects are `LoyalCH`, `PriceDiff` and `PctDiscMM`. The odds of a customer purchasing MinuteMaid increase by 722 when the `LoyalCH`, the most influential variable in the model, increases by the variable's standard deviation of 30%. `PriceDiff` increases chance of purchase by 30 with every $0.27 increase in the difference between MinuteMaid and Citrus Hill. The odds of a MinuteMaid purchase increase by 18 for every 10% increase in `PctDiscMM`.
+
+
+#### Performance against test data 
+
+The predictions of this logistic regression performed well against the ground truth outcomes in the test set held in reserve at the beginning of our analysis.
+
+Our regression turned variables into percentage likelihoods, but it is up to the analyst to decide what percentage triggers a label of "Yes; Purchased MinuteMaid", a decision called the "classification threshold." The area-under-the-curve (AUC) metric is a sign of a model's general performance in classification --- a higher AUC means a model is good at balancing the risk of true positives to true negatives.
+
+The area-under-curve for this model is 0.90.
+
+```{r Lasso logistic regression 2}
+
+test_predictors <- test[,c(2:13)]
+test_predictors <- data.matrix(test_predictors)
+pred <- predict(cv.binomial, newx = test_predictors, 
+               type = "response", s ="lambda.min")
+pred <- prediction(pred, test$Purchase)
+perf <- performance(pred,"tpr","fpr")
+auc_ROCR<- performance(pred,measure ="auc")
+
+plot(perf,colorize=FALSE, col="black") 
+lines(c(0,1),c(0,1),col = "gray", lty = 4 )
+text(1,0.15,labels=paste("AUC = ",round(auc_ROCR@y.values[[1]],
+                                        digits=2),sep=""),adj=1)
+
+```
+
+The AUC tells us how well our model can handle the balance between true and false positives, but we will ultimately need to choose the optimal threshold for our model.
+
+The analysis below lets us know that the optimal classification threshold for our model is $P$ = 0.465 — any customer with that high or higher a likelihood of purchasing MinuteMaid should be classified as "Yes; Will Purchase MinuteMaid." That probability threshold optimally balances the likelihood of true positives and the risk of false positives.
+
+```{r Accuracy and optimal classification threshold}
+
+# Calculate classification threshold of highest accuracy
+
+# Add predictions to test set
+test$lass_preds <- predict(cv.binomial, newx = test_predictors, 
+               type = "response", s ="lambda.min")
+
+# Create data frame of accuracy rates at various thresholds
+
+acc_matrix <- AUC::accuracy(test$lass_preds, test$Purchase)
+
+acc_df <- data.frame(thresh = acc_matrix$cutoffs, acc = acc_matrix$measure)
+
+# Isolate highest threshold and accuracy rate
+
+acc_df %>% 
+  filter(acc == max(acc)) %>% 
+  filter(thresh == max(thresh))
+
+# View highest threshold and accuracy rate in context.
+
+plot(acc_matrix, col="black") 
+
+
+```
+
+
+### **Gradient Boosted Decision Trees:**
+
+Management also wants to be able to predict the likelihood that any given future customer will buy Minute Maid. Knowing how many customers are likely to purchase Minute Maid can help in (1) forecasting cash flow and supply chain demand and (2) targeting marketing to customers who are in the ideal position to buy and ignoring those who are not.
+
+Decision tree modelling models the data and assigns a probabilistic decision path to assign classification, in this case either to a likely Minute Maid purchase or not.  However, the way decision trees are assembled can lead to overfitting to the data if the tree is too deep or has too many branches, in addition they are prone to fall prey to data sampling errors, creating trees that reflect the train sample better than they do the ground truth.  To overcome this, Gradient Boosted Trees (GBT) are a machine learning algorithm that overcomes the propensity of decision tree algorithms to overfit the data and susceptibility to data sampling errors.  GBT overcomes this by building a more accurate complex model iteratively by combining many smaller less predictive models.  Each successive round of learning seeks to explain the remaining error left by the previously assembled tree.
+
+```{r boosted trees model tuning}
+set.seed(1234)
+recipe_oj <- recipe(Purchase ~ ., train)
+
+model_oj_bt <- boost_tree(trees = tune(), tree_depth = tune(), learn_rate = tune()) %>%
+  set_engine('xgboost', verbosity = 0) %>%
+  set_mode('classification')
+
+hyperparameter_grid <- grid_regular(trees(), tree_depth(), learn_rate(), levels = 5)
+
+purchase_folds <- vfold_cv(train, v=4) # 4-fold Cross validation
+
+oj_workflow <- workflow() %>% add_model(model_oj_bt) %>% add_recipe(recipe_oj) #Set Workflow
+
+# Tune Hyper-parameters
+oj_tune <- oj_workflow %>% tune_grid(resamples = purchase_folds,
+                                     grid = hyperparameter_grid,
+                                     metrics = metric_set(accuracy))
+
+best_bt_model <- oj_tune %>% select_best('accuracy') #Select best Hyper-parameters from grid
+
+```
+
+The hyperparameters for number of trees, tree depth, and learn rate for the boosted tree model were tuned using a grid with 5 levels and 4-fold cross validation. Hyperparameter performance was evaluated by overall model accuracy of prediction. The final hyperparameters for the model are number of trees (`r best_bt_model$trees`), tree depth (`r best_bt_model$tree_depth`), and learn rate (`r best_bt_model$learn_rate`).
+
+```{r boosted trees final model}
+
+oj_final_workflow <- oj_workflow %>% finalize_workflow(best_bt_model) # Create Final Workflow based upon selected hyperparameters
+
+final_fit <- oj_final_workflow %>% last_fit(split = purchase_testtrain) # Final Fit Model
+
+final_fit %>% collect_metrics()
+```
+
+The finalized model gave an AUC of 0.89, which is comparable, but slightly underperforms the logistic regression model previously discussed.
+
+```{r variable importance}
+
+oj_final_workflow %>% fit(data = train) %>% extract_fit_parsnip() %>% vip(geom = 'col') #Plot most important variables based upon Variable Importance metric
+
+
+vi_values <- oj_final_workflow %>% fit(data = train) %>% extract_fit_parsnip() %>% vi()
+
+vi_values
+
+```
+
+One drawback to using a black-box machine learning algorithm like Gradient Boosted Trees, is that understanding the insights the model provides are not immediately available, and the use of explanatory analysis is required to further understand what actions management can take to increase sales of Minute Maid.  One such tool is the use of variable importance to understand which variables the model sees as most important in determining a customer outcome of **"Yes; Purchased Minute Maid"**.
+
+The most important variable according to the Boosted Tree model is Customer Brand Loyalty to Citrus Hill(`r vi_values$Variable[1]`) with `r round(vi_values$Importance[1] *100, 2)`% importance, followed by Price Difference(`r vi_values$Variable[2]`) with `r round(vi_values$Importance[2] *100, 2)`% importance. All other independent variables displayed importance of \<3%.
+
+```{r XAI}
+
+model_fitted <- oj_final_workflow %>% fit(data = train)
+
+explainer_rf <- explain_tidymodels(model_fitted, 
+                                   data = train[,-1], 
+                                   y = train$Purchase, 
+                                   type = "pdp",verbose = FALSE)
+
+pdp <- model_profile(explainer_rf, 
+                             variables = c("LoyalCH","PriceDiff"),
+                             N=NULL)
+
+```
+
+In addition to understanding which variables are important for management to focus on, it is also important to understand how those variables interact with the prediction for Minute Maid purchases by the customer.  It is useful to know that Brand Loyalty is important, but even more useful to know how to use that lever to identify potential crossover customers.  Partial Dependence Profiling (PDP) allows some insight into what is happening inside a blackbox model such as GBTs.  The above plot shows the partial independent portion of a variable's influence on the dependent outcome variable. Comparable to information that can be obtained from linear or logistic regression.
+
+```{r Brand Loyalty PDP}
+plot(pdp, title='Partial Dependence Profiles', subtitle=' ')
+```
+Both variables display a positive relationship with the purchase of Minute Maid.  Meaning, that the more Brand Loyalty a customer displays towards Citrus Hill and the larger the price difference between MM and CH (in Citrus Hill's favor) the more likely the customer was to purchase Minute Maid.  This would seem to be counter-intuitive and so it was verified by looking at the original data, where this observation was supported (see below).  This would seem to indicate that there is a unique positioning opportunity for Minute Maid in WGC stores.
+
+```{r LoyaltyCH vs PriceDiff plot}
+ggplot2::ggplot(df, aes(LoyalCH, color=Purchase)) + geom_density() + scale_color_discrete(name='Purchased MM', labels=c("No","Yes")) + labs(title = 'Density plot of Observations for LoyalCH')
+```
+
+## Conclusions and Recommendations
+At the beginning of this project we met with stakeholders in the Branding and Sales departments and identified key deliverables to ensure that this project provided actionable information and value to the company.  Based upon our work we suggest the following interpretations and courses of action moving forward.
+
+### Brand
+Both the logistic model and the explanatory analysis supporting the gradient boosted trees model give us insight into the predictor variables which influence the purchase of Minute Maid orange juice by our customers. Both models tell us that `LoyalCH`($\beta$ = 6.58, i = 82.4%) and `PriceDiff`(3.41, 10.4%) and `PctDiscMM`($\beta$ = 2.91) are primary contributors to a customers decision to purchase Minute Maid.  `PriceMM`, `DiscCH`, `SalesPriceCH` and `PctDiscCH` do not contribute significantly to predicting customer behavior.  All other variables are of limited significance, and provide little additional insight into customer behavior.
+
+When examined holistically, it becomes apparent that two major factors are supported by the data. First, that customers that exhibit high levels of Citrus Hill Brand Loyalty are more likely to purchase Minute Maid. Second, that both discounting of Minute Maid and price parity between Minute Maid and Citrus Hill have antagonistic effects on customers choosing to purchase Minute Maid brand orange juice.  These factors support the concept that Minute Maid should be positioned as a Premium brand within WGC stores, and that efforts to discount or price match Citrus Hill erode the customers perception of Minute Maid as a premium brand and should be avoided.  The data suggests that a 0.18 \< `PriceDiff` \< 0.39, and an optimal value of `PriceDiff` = 0.29 would lead to increased sales of Minute Maid (see Appendix). It also supports the fact that loyal Citrus Hill purchasers might more appropriately be viewed as loyal Orange Juice purchasers and that targeting this customer segment with marketing techniques that enhance the perception of Minute Maid as a premium brand may lead to customer conversion.
+
+Both models showed remarkable accuracy at predicting Minute Maid customer purchases as measured by AUC (LR = 0.90, GBT = 0.89).  We can be very confident that these models are accurately capturing customer behavior.  Understanding the factors which are making the models so accurate allows us to be equally confident in the recommendations arising from these models.  Also of note is the fact that both methodologies independently found similar factors to be at work.
+
+### Sales
+A key deliverable of this project was to explore the viability of a predictive model that could be used by the Sales Department to provide the probability a customer would purchase Minute Maid.  We tested a predictive statistical model as well as a machine learning model.  Both models performed well.  When compared by AUC (a metric which represents a model’s ability to correctly identify Minute Maid purchases balanced against predictions of purchase which do not occur) the logistic regression model slightly outperformed the machine learning model (see above).  In terms of overall model accuracy the logistic regression model again outperformed the machine learning model (LR = 84.3%, GBT = 79.9%).  The optimal decision threshold to achieve the most accurate results was a probability of $\geq$ 0.468. An additional benefit of the logistic regression model is that it requires less computational resources than the machine learning model.  
+
+No real world model will be perfect at correctly classifying customers as Minute Maid purchase vs. no purchase, however we propose that correctly classifying customers 84.3% of the time provides sufficient added value to the company that implementation of the model in the Sales Department will positively impact business operations in regards to Minute Maid orange juice sales.
+
+
+\newpage
+## Appendix: Data Characteristics
+
+```{r Appendix 1 Data Characteristics}
+summary(df)
+summary(test)
+summary(train)
+
+corr <- cor(df[-1]) #correlogram of numeric variables, excluding outcome variable
+testDf <- cor.mtest(df[-1], conf.level = 0.95) #compute significance of correlation
+# Plot correlogram with coefficients
+corrplot(corr, p.mat = testDf$p, method = 'number', type = 'lower', insig='blank', 
+         addCoef.col ='black', number.cex = 0.6, order = 'AOE', diag=FALSE, tl.srt = 45, tl.col = 'black')
+
+ggplot2::ggplot(df, aes(PctDiscMM, color=Purchase)) + geom_density() + scale_color_discrete(name='Purchased MM', labels=c("No","Yes")) + labs(title = 'Density plot of Observations for PctDiscMM')
+
+#ggplot2::ggplot(df, aes(LoyalCH, color=Purchase)) + geom_density() + scale_color_discrete(name='Purchased MM', labels=c("No","Yes")) + labs(title = 'Density plot of Observations for LoyalCH')
+
+ggplot2::ggplot(df, aes(PriceDiff, color=Purchase)) + geom_density() + scale_color_discrete(name='Purchased MM', labels=c("No","Yes")) + labs(title = 'Density plot of Observations for PriceDiff') + geom_vline(xintercept = 0.18, linetype = 3) + geom_vline(xintercept = 0.39, linetype = 3)
+
+
+```
