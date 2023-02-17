@@ -32,7 +32,7 @@ train.columns = ['sentiment','content'] # Name Columns
 train.sentiment = train.sentiment.replace([4], 1) #Update DV
 train.sentiment = train.sentiment.astype('bool')
 # Import Data for classification
-data = pd.read_csv('tweets.csv')
+data = pd.read_csv('test.csv')
 data = data.loc[data['language'] =='en'] # Select only English Tweets
 data = data.loc[(data['source'] == 'Twitter for iPhone') | (data['source'] == 'Twitter for Android') | (data['source'] == 'Twitter Web App')] # Select only mobile and web app tweets
 
