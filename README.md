@@ -7,3 +7,4 @@
 <a href=https://github.com/WestlakeData/Portfolio/tree/main/Padres%20Attendance%20Model>U of U Parking Website: </a> Roughed in website for managing U of U parking system, user & admin sides, includes authentication, authorization, dynamic data (HTML, PHP, CSS, JavaScript, Bootstrap)</br>
 <a href=https://github.com/WestlakeData/Portfolio/tree/main/WasatchGrocery>Wasatch Grocery: </a> Analysis of OJ sales at Wasatch Grocery Chain (R, Logit, Boosted Trees, PDP explanatory AI)</br>
 <a href=https://github.com/WestlakeData/Portfolio/tree/main/python%20web%20scraper>Web Scraper: </a> Web scraper to obtain public land records info from Utah County website (Python, SQLAlchemy, pandas)</br>
+<a href=https://github.com/WestlakeData/Portfolio/tree/main/Maverik%20Forecasting>Maverik Stores Forecasting: </a>  EDA and forecasting of new store sales based upon qualitative data (Python, Pandas, XGBoost, fbProphet)</br>
