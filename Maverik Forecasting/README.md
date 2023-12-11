@@ -27,16 +27,12 @@ The project will be executed by a dedicated team of three experts, working colla
 "# Maverik_Forecasting" 
 
 ## Exploratory Data Analysis
-*Maverik EDA Notebook.ipynb*  
-*Maverik EDA Notebook.pdf*  
 Based upon our intial analysis, there are several variables which are likely to inform a machine learning model, therefore we propose to continue with this dataset to the modelling phase. Several variables were also identified that have no variation in the data set and so may be excluded. Both 'day of week' and 'annual fiscal week' data showed recognizable seasonality trends which will be important to incorporate into any machine learning model. It is likely that several engineered features will need to be created, however, the current data has already shown that it can capture a significant amount of the variation in the dataset. We propose due to the differences in the 4 key segments it will be necessary to create multiple models in order to accurately forecast sales volumes for each segment. 
 
-## Modelling
-*Modelling.ipynb*  
+## Modelling 
 Time series modelling was effective at capturing the seasonality observed in the training data. However predicted values displayed large RMSE values, our model evaluation metric. We therefore decided to pursue other model paradigms. Our modelling showed that Random Forest tree models performed the best in terms of RMSE, which we used as our model evaluation metric. Results for Inside Sales (333.76), Food Service (101.04), Diesel (369.71), and Unleaded Gasoline (352.84) outperformed all other models on the validation data set. XGBoost showed some promise by outperforming Random Forest on Inside Sales (309.17), even though it didn't match the results in other sales components. Further examination of model performance on the test data set, comprised of 5 stores, showed that XGBoost models gave comparable results even though the current model has undergone minimal hyperparameter tuning. Further work in this area will likely lead to improved accuracy of XGBoost models.
 
 In addition, Feature Importance and the elimination of features with low importance had a dramatic effect on the accuracy of both types of tree models (data not shown). We believe that a possible path forward is to use an optimized XGBoost model to produce predicted sales which can then inform a time series model which can improve the models performance in regards to seasonality. This predicted data could then be slowly replaced by actual sales data, which would allow our model to satisfy one of the key aspects of the original business problem.
 
-## Presentation
-*presentation.pptx*  
-Presentation delivered to stakeholders.
+## Group Work
+Group deliverables available <a href link=https://github.com/WestlakeData/Maverik_Forecasting>here</a>
